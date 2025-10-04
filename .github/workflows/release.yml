@@ -40,23 +40,6 @@ jobs:
       - name: Build the package as builduser
         run: sudo -u builduser makepkg -sf --noconfirm
 
-      # MODIFIED: This step now handles split packages by selecting the main binary.
-      - name: Get main package filename
-        id: get_filename
-        run: |
-          # Find the specific binary package file, ignoring debug or other variants.
-          PKG_FILE=$(find . -maxdepth 1 -name "ungoogled-chromium-bin-*.pkg.tar.zst")
-
-          if [ -z "$PKG_FILE" ] || [ $(echo "$PKG_FILE" | wc -l) -ne 1 ]; then
-            echo "::error::Could not find exactly one main package file (ungoogled-chromium-bin-*.pkg.tar.zst)."
-            echo "Listing current directory contents:"
-            ls -l
-            exit 1
-          fi
-          
-          echo "Found package: $PKG_FILE"
-          echo "PKG_NAME=$(basename $PKG_FILE)" >> $GITHUB_ENV
-      
       - name: Checkout pacman repo
         uses: actions/checkout@v4
         with:
@@ -65,11 +48,18 @@ jobs:
           path: 'repo'
           token: ${{ secrets.MY_REPO_PAT }}
 
-      - name: Update Arch repository
+      # MODIFIED: This step now moves and adds ALL created packages to the repository.
+      - name: Update Arch repository with all packages
         run: |
           mkdir -p repo/x86_64
-          mv ${{ env.PKG_NAME }} repo/x86_64/
-          repo-add repo/custom-arch-repo.db.tar.gz repo/x86_64/${{ env.PKG_NAME }}
+          # Move all .pkg.tar.zst files into the repo directory
+          mv *.pkg.tar.zst repo/x86_64/
+          
+          echo "Packages moved to repository:"
+          ls -l repo/x86_64/
+          
+          # Add all packages from the directory to the database at once
+          repo-add repo/custom-arch-repo.db.tar.gz repo/x86_64/*.pkg.tar.zst
           
       - name: Commit and push repository changes
         run: |
@@ -78,7 +68,8 @@ jobs:
           git config user.email "actions@github.com"
           git add .
           if ! git diff-index --quiet HEAD; then
-            git commit -m "Update repository: add ${{ env.PKG_NAME }}"
+            # The commit message now references the version, not a single package name
+            git commit -m "Update repository for version ${{ github.event.inputs.version }}"
             git push
           else
             echo "No changes to the repository to commit."
@@ -90,10 +81,12 @@ jobs:
           git tag ${{ github.event.inputs.version }}
           git push origin ${{ github.event.inputs.version }}
 
+      # MODIFIED: This step now uploads ALL package files to the release.
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version }}
-          files: "repo/x86_64/${{ env.PKG_NAME }}"
+          # Use a wildcard to upload all .pkg.tar.zst files as release assets
+          files: repo/x86_64/*.pkg.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
