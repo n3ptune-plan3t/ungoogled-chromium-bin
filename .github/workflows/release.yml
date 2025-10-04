@@ -1,6 +1,5 @@
 name: Manual Build and Deploy
 
-# This workflow is now triggered manually from the Actions tab
 on:
   workflow_dispatch:
     inputs:
@@ -24,7 +23,6 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # Using the more complete dependency list from your previous build to prevent errors.
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
@@ -42,9 +40,17 @@ jobs:
       - name: Build the package as builduser
         run: sudo -u builduser makepkg -sf --noconfirm
 
-      - name: Get package filename
-        id: get_filename
-        run: echo "PKG_NAME=$(basename *.pkg.tar.zst)" >> $GITHUB_ENV
+      # MODIFIED: This step now verifies the package exists before continuing
+      - name: Verify package and get filename
+        run: |
+          # Check if exactly one package file exists
+          if [ $(find . -maxdepth 1 -name "*.pkg.tar.zst" | wc -l) -ne 1 ]; then
+            echo "::error::Build failed: Expected one .pkg.tar.zst file, but found none or more than one."
+            echo "Listing current directory contents:"
+            ls -l
+            exit 1
+          fi
+          echo "PKG_NAME=$(basename *.pkg.tar.zst)" >> $GITHUB_ENV
       
       - name: Checkout pacman repo
         uses: actions/checkout@v4
@@ -58,7 +64,6 @@ jobs:
         run: |
           mkdir -p repo/x86_64
           mv ${{ env.PKG_NAME }} repo/x86_64/
-          # Fixed the stray parenthesis in this command
           repo-add repo/custom-arch-repo.db.tar.gz repo/x86_64/${{ env.PKG_NAME }}
           
       - name: Commit and push repository changes
@@ -75,17 +80,14 @@ jobs:
           fi
           cd ..
 
-      # NEW: This step creates the Git tag based on your input
       - name: Create and push Git tag
         run: |
           git tag ${{ github.event.inputs.version }}
           git push origin ${{ github.event.inputs.version }}
 
-      # MODIFIED: This step now uses your input to create the release
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
-          # Use the version provided in the manual trigger as the tag name
           tag_name: ${{ github.event.inputs.version }}
           files: "repo/x86_64/${{ env.PKG_NAME }}"
         env:
