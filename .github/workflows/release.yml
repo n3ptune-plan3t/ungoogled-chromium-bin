@@ -1,5 +1,4 @@
 name: Manual Build and Deploy
-
 on:
   workflow_dispatch:
     inputs:
@@ -7,7 +6,6 @@ on:
         description: 'The release version tag to create (e.g., v1.0.0)'
         required: true
         type: string
-
 jobs:
   build-and-deploy:
     name: Build, Deploy to Repo, and Release
@@ -15,32 +13,29 @@ jobs:
     container:
       image: archlinux:latest
       options: --security-opt seccomp=unconfined
-    
+   
     permissions:
       contents: write
-
     steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
+      - name: Bootstrap Git for checkout
         run: |
           pacman -Syu --noconfirm
-          # Added git-lfs to the list
+          pacman -S --noconfirm git
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
           pacman -S --noconfirm --needed \
-            base-devel git git-lfs gtk3 nss alsa-lib xdg-utils libxss libcups \
+            base-devel git-lfs gtk3 nss alsa-lib xdg-utils libxss libcups \
             ttf-liberation libpulse libva desktop-file-utils hicolor-icon-theme \
             fontconfig libjpeg-turbo flac libwebp minizip opus harfbuzz \
             libxslt libpng freetype2
-
       - name: Set correct permissions for makepkg
         run: |
           useradd -m builduser
           chown -R builduser:builduser .
-
       - name: Build the package as builduser
         run: sudo -u builduser makepkg -sf --noconfirm
-
       - name: Checkout pacman repo
         uses: actions/checkout@v4
         with:
@@ -48,7 +43,6 @@ jobs:
           ref: 'main'
           path: 'repo'
           token: ${{ secrets.MY_REPO_PAT }}
-
       - name: Update Arch repository with all packages
         run: |
           mkdir -p repo/x86_64
@@ -56,20 +50,20 @@ jobs:
           echo "Packages moved to repository:"
           ls -l repo/x86_64/
           repo-add repo/custom-arch-repo.db.tar.gz repo/x86_64/*.pkg.tar.zst
-          
+         
       - name: Commit and push repository changes
         run: |
           cd repo
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          
+         
           # Set up Git LFS to handle the large package files
           git lfs install
           git lfs track "*.pkg.tar.zst"
-          
+         
           # Add all files, including the .gitattributes file created by LFS
           git add .
-          
+         
           if ! git diff-index --quiet HEAD; then
             git commit -m "Update repository for version ${{ github.event.inputs.version }}"
             git push
@@ -77,12 +71,10 @@ jobs:
             echo "No changes to the repository to commit."
           fi
           cd ..
-
       - name: Create and push Git tag
         run: |
           git tag ${{ github.event.inputs.version }}
           git push origin ${{ github.event.inputs.version }}
-
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
