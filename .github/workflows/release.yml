@@ -40,17 +40,22 @@ jobs:
       - name: Build the package as builduser
         run: sudo -u builduser makepkg -sf --noconfirm
 
-      # MODIFIED: This step now verifies the package exists before continuing
-      - name: Verify package and get filename
+      # MODIFIED: This step now handles split packages by selecting the main binary.
+      - name: Get main package filename
+        id: get_filename
         run: |
-          # Check if exactly one package file exists
-          if [ $(find . -maxdepth 1 -name "*.pkg.tar.zst" | wc -l) -ne 1 ]; then
-            echo "::error::Build failed: Expected one .pkg.tar.zst file, but found none or more than one."
+          # Find the specific binary package file, ignoring debug or other variants.
+          PKG_FILE=$(find . -maxdepth 1 -name "ungoogled-chromium-bin-*.pkg.tar.zst")
+
+          if [ -z "$PKG_FILE" ] || [ $(echo "$PKG_FILE" | wc -l) -ne 1 ]; then
+            echo "::error::Could not find exactly one main package file (ungoogled-chromium-bin-*.pkg.tar.zst)."
             echo "Listing current directory contents:"
             ls -l
             exit 1
           fi
-          echo "PKG_NAME=$(basename *.pkg.tar.zst)" >> $GITHUB_ENV
+          
+          echo "Found package: $PKG_FILE"
+          echo "PKG_NAME=$(basename $PKG_FILE)" >> $GITHUB_ENV
       
       - name: Checkout pacman repo
         uses: actions/checkout@v4
