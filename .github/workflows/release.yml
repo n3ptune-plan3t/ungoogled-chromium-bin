@@ -1,10 +1,13 @@
-name: Build and Deploy
+name: Manual Build and Deploy
 
+# This workflow is now triggered manually from the Actions tab
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'The release version tag to create (e.g., v1.0.0)'
+        required: true
+        type: string
 
 jobs:
   build-and-deploy:
@@ -18,15 +21,19 @@ jobs:
       contents: write
 
     steps:
-      # Build steps are the same as before...
       - name: Checkout source code
         uses: actions/checkout@v4
 
+      # Using the more complete dependency list from your previous build to prevent errors.
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed base-devel git
-      
+          pacman -S --noconfirm --needed \
+            base-devel git gtk3 nss alsa-lib xdg-utils libxss libcups \
+            ttf-liberation libpulse libva desktop-file-utils hicolor-icon-theme \
+            fontconfig libjpeg-turbo flac libwebp minizip opus harfbuzz \
+            libxslt libpng freetype2
+
       - name: Set correct permissions for makepkg
         run: |
           useradd -m builduser
@@ -39,25 +46,20 @@ jobs:
         id: get_filename
         run: echo "PKG_NAME=$(basename *.pkg.tar.zst)" >> $GITHUB_ENV
       
-      # --- MODIFIED STEP ---
       - name: Checkout pacman repo
         uses: actions/checkout@v4
         with:
-          # The full name of your central repository (e.g., your-username/my-arch-repo)
           repository: 'n3ptune-plan3t/custom-arch-repo'
-          # The branch to checkout, e.g., 'main'
           ref: 'main'
-          # Checkout to a subdirectory named 'repo'
           path: 'repo'
-          # Use the PAT for authentication
           token: ${{ secrets.MY_REPO_PAT }}
 
-      # The remaining steps are the same as before
       - name: Update Arch repository
         run: |
           mkdir -p repo/x86_64
           mv ${{ env.PKG_NAME }} repo/x86_64/
-          repo-add repo/custom-arch-repo.db.tar.gz) repo/x86_64/${{ env.PKG_NAME }}
+          # Fixed the stray parenthesis in this command
+          repo-add repo/custom-arch-repo.db.tar.gz repo/x86_64/${{ env.PKG_NAME }}
           
       - name: Commit and push repository changes
         run: |
@@ -73,9 +75,18 @@ jobs:
           fi
           cd ..
 
+      # NEW: This step creates the Git tag based on your input
+      - name: Create and push Git tag
+        run: |
+          git tag ${{ github.event.inputs.version }}
+          git push origin ${{ github.event.inputs.version }}
+
+      # MODIFIED: This step now uses your input to create the release
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
+          # Use the version provided in the manual trigger as the tag name
+          tag_name: ${{ github.event.inputs.version }}
           files: "repo/x86_64/${{ env.PKG_NAME }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
