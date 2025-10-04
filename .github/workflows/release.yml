@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
-      options: --security-opt seccomp=unconfined
+      options: --security-opt seccomp=unconfigured
     
     permissions:
       contents: write
@@ -26,8 +26,9 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
+          # Added git-lfs to the list
           pacman -S --noconfirm --needed \
-            base-devel git gtk3 nss alsa-lib xdg-utils libxss libcups \
+            base-devel git git-lfs gtk3 nss alsa-lib xdg-utils libxss libcups \
             ttf-liberation libpulse libva desktop-file-utils hicolor-icon-theme \
             fontconfig libjpeg-turbo flac libwebp minizip opus harfbuzz \
             libxslt libpng freetype2
@@ -48,17 +49,12 @@ jobs:
           path: 'repo'
           token: ${{ secrets.MY_REPO_PAT }}
 
-      # MODIFIED: This step now moves and adds ALL created packages to the repository.
       - name: Update Arch repository with all packages
         run: |
           mkdir -p repo/x86_64
-          # Move all .pkg.tar.zst files into the repo directory
           mv *.pkg.tar.zst repo/x86_64/
-          
           echo "Packages moved to repository:"
           ls -l repo/x86_64/
-          
-          # Add all packages from the directory to the database at once
           repo-add repo/custom-arch-repo.db.tar.gz repo/x86_64/*.pkg.tar.zst
           
       - name: Commit and push repository changes
@@ -66,9 +62,15 @@ jobs:
           cd repo
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+          
+          # Set up Git LFS to handle the large package files
+          git lfs install
+          git lfs track "*.pkg.tar.zst"
+          
+          # Add all files, including the .gitattributes file created by LFS
           git add .
+          
           if ! git diff-index --quiet HEAD; then
-            # The commit message now references the version, not a single package name
             git commit -m "Update repository for version ${{ github.event.inputs.version }}"
             git push
           else
@@ -81,12 +83,10 @@ jobs:
           git tag ${{ github.event.inputs.version }}
           git push origin ${{ github.event.inputs.version }}
 
-      # MODIFIED: This step now uploads ALL package files to the release.
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version }}
-          # Use a wildcard to upload all .pkg.tar.zst files as release assets
           files: repo/x86_64/*.pkg.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
