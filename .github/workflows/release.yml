@@ -1,0 +1,81 @@
+name: Build and Deploy
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    name: Build, Deploy to Repo, and Release
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --security-opt seccomp=unconfined
+    
+    permissions:
+      contents: write
+
+    steps:
+      # Build steps are the same as before...
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel git
+      
+      - name: Set correct permissions for makepkg
+        run: |
+          useradd -m builduser
+          chown -R builduser:builduser .
+
+      - name: Build the package as builduser
+        run: sudo -u builduser makepkg -sf --noconfirm
+
+      - name: Get package filename
+        id: get_filename
+        run: echo "PKG_NAME=$(basename *.pkg.tar.zst)" >> $GITHUB_ENV
+      
+      # --- MODIFIED STEP ---
+      - name: Checkout pacman repo
+        uses: actions/checkout@v4
+        with:
+          # The full name of your central repository (e.g., your-username/my-arch-repo)
+          repository: 'n3ptune-plan3t/custom-arch-repo'
+          # The branch to checkout, e.g., 'main'
+          ref: 'main'
+          # Checkout to a subdirectory named 'repo'
+          path: 'repo'
+          # Use the PAT for authentication
+          token: ${{ secrets.MY_REPO_PAT }}
+
+      # The remaining steps are the same as before
+      - name: Update Arch repository
+        run: |
+          mkdir -p repo/x86_64
+          mv ${{ env.PKG_NAME }} repo/x86_64/
+          repo-add repo/custom-arch-repo.db.tar.gz) repo/x86_64/${{ env.PKG_NAME }}
+          
+      - name: Commit and push repository changes
+        run: |
+          cd repo
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add .
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "Update repository: add ${{ env.PKG_NAME }}"
+            git push
+          else
+            echo "No changes to the repository to commit."
+          fi
+          cd ..
+
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "repo/x86_64/${{ env.PKG_NAME }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
